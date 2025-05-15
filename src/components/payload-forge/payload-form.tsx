@@ -50,11 +50,12 @@ interface PayloadFormProps {
   formMode: FormMode;
   showSaveButton?: boolean;
   saveButtonText?: string;
+  isSaving?: boolean; // Added isSaving prop
 }
 
 const PROD_CLUSTERS: EmrClusterValue[] = ["ump-analytics-workflow-1", "ump-analytics-workflow-2"];
 
-export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, saveButtonText = "Save" }: PayloadFormProps) {
+export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, saveButtonText = "Save", isSaving = false }: PayloadFormProps) {
   const isUseMode = formMode === 'use';
   const { toast } = useToast();
 
@@ -101,7 +102,6 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
           
-          {/* Always visible or editable in use mode */}
           <Card className="shadow-xl overflow-hidden">
             <CardHeader className="bg-card-foreground/5">
               <CardTitle className="text-2xl">Job Identification & Execution</CardTitle>
@@ -117,7 +117,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                   <FormItem>
                     <FormLabel>Job Name</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g. my-spark-job-001" {...field} disabled={false} />
+                      <Input placeholder="e.g. my-spark-job-001" {...field} disabled={isSaving} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -132,7 +132,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                     <Select
                       onValueChange={(value) => handleEmrSelectChange(value as EmrClusterValue, field.onChange, field.value)}
                       value={field.value}
-                      disabled={false}
+                      disabled={isSaving}
                     >
                       <FormControl>
                         <SelectTrigger>
@@ -158,7 +158,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                   <FormItem className="md:col-span-2">
                     <FormLabel>Main Application File (URL or Path)</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g. s3://bucket/path/to/app.jar or https://..." {...field} disabled={false} />
+                      <Input placeholder="e.g. s3://bucket/path/to/app.jar or https://..." {...field} disabled={isSaving} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -171,7 +171,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                   <FormItem className="md:col-span-2">
                     <FormLabel>Main Class</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g. com.example.MySparkApp" {...field} disabled={false} />
+                      <Input placeholder="e.g. com.example.MySparkApp" {...field} disabled={isSaving} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -186,7 +186,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                       <FormItem>
                         <FormLabel>AMS App Name</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. my-ams-application" {...field} />
+                          <Input placeholder="e.g. my-ams-application" {...field} disabled={isSaving} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -199,7 +199,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                       <FormItem>
                         <FormLabel>Configuration Name</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. my-app-config" {...field} />
+                          <Input placeholder="e.g. my-app-config" {...field} disabled={isSaving} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -211,7 +211,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Job Priority</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isSaving}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select job priority" />
@@ -249,7 +249,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                         <FormItem>
                           <FormLabel>Stop Job After (minutes)</FormLabel>
                           <FormControl>
-                            <Input type="number" placeholder="e.g. 420" {...field} />
+                            <Input type="number" placeholder="e.g. 420" {...field} disabled={isSaving} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -267,7 +267,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                             <FormDescription>Enable GPU resources.</FormDescription>
                           </div>
                           <FormControl>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isSaving} />
                           </FormControl>
                         </FormItem>
                       )}
@@ -282,7 +282,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                             <FormDescription>Allow on spot instances.</FormDescription>
                           </div>
                           <FormControl>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isSaving} />
                           </FormControl>
                         </FormItem>
                       )}
@@ -297,7 +297,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                             <FormDescription>Utilize Graviton processors.</FormDescription>
                           </div>
                           <FormControl>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            <Switch checked={field.value} onCheckedChange={field.onChange} disabled={isSaving} />
                           </FormControl>
                         </FormItem>
                       )}
@@ -321,7 +321,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                       <FormItem className="md:col-span-2">
                         <FormLabel>Docker Image Path</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. your-registry/your-image:latest" {...field} />
+                          <Input placeholder="e.g. your-registry/your-image:latest" {...field} disabled={isSaving} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -333,7 +333,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Language</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <Select onValueChange={field.onChange} defaultValue={field.value} disabled={isSaving}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select language" />
@@ -358,7 +358,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                 control={form.control}
                 name="spark_conf"
                 title="Spark Configurations"
-                errors={form.formState.errors}
+                errors={form.formState.errors} // Consider disabling DynamicKeyValueEditor fields if isSaving
               />
 
               <Separator />
@@ -367,13 +367,13 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                 control={form.control}
                 name="hadoop_conf"
                 title="Hadoop Configurations"
-                errors={form.formState.errors}
+                errors={form.formState.errors} // Consider disabling DynamicKeyValueEditor fields if isSaving
               />
             </>
           )}
 
           {showSaveButton && formMode !== 'use' && (
-            <Button type="submit" className="w-full bg-accent hover:bg-accent/90 text-accent-foreground text-lg py-6 mt-8">
+            <Button type="submit" className="w-full bg-accent hover:bg-accent/90 text-accent-foreground text-lg py-6 mt-8" disabled={isSaving}>
               <Save className="mr-2 h-5 w-5" /> {saveButtonText}
             </Button>
           )}
@@ -422,4 +422,3 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
     </>
   );
 }
-

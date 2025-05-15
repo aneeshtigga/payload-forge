@@ -1,111 +1,140 @@
 
 import type { PayloadFormValues } from './payload-schema';
-import { nanoid } from 'nanoid'; // Changed from uuid
+import { nanoid } from 'nanoid';
+import { db } from './firebase'; // Import Firestore instance
+import {
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  query,
+  orderBy,
+  Timestamp,
+  serverTimestamp,
+  where,
+} from 'firebase/firestore';
+import { defaultPayloadFormValues } from './payload-schema';
 
-const TEMPLATES_STORAGE_KEY = 'payloadForgeTemplates';
+const TEMPLATES_COLLECTION = 'payloadForgeTemplates';
 
 export interface StoredTemplate {
   id: string;
   name: string;
-  description?: string; // Optional description
+  description?: string;
   data: PayloadFormValues;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: string | Timestamp; // Store as ISO string or Firestore Timestamp
+  updatedAt: string | Timestamp; // Store as ISO string or Firestore Timestamp
 }
 
-export function getTemplates(): StoredTemplate[] {
-  if (typeof window === 'undefined') {
-    return [];
-  }
+// Helper to convert Firestore Timestamps to ISO strings
+function processTimestamps(template: StoredTemplate): StoredTemplate {
+  return {
+    ...template,
+    createdAt: template.createdAt instanceof Timestamp ? template.createdAt.toDate().toISOString() : template.createdAt as string,
+    updatedAt: template.updatedAt instanceof Timestamp ? template.updatedAt.toDate().toISOString() : template.updatedAt as string,
+  };
+}
+
+
+export async function getTemplates(): Promise<StoredTemplate[]> {
   try {
-    const templatesJson = localStorage.getItem(TEMPLATES_STORAGE_KEY);
-    return templatesJson ? JSON.parse(templatesJson) : [];
+    const templatesCollection = collection(db, TEMPLATES_COLLECTION);
+    const q = query(templatesCollection, orderBy("updatedAt", "desc"));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(docSnap => processTimestamps({ id: docSnap.id, ...docSnap.data() } as StoredTemplate));
   } catch (error) {
-    console.error("Error fetching templates from localStorage:", error);
+    console.error("Error fetching templates from Firestore:", error);
     return [];
   }
 }
 
-export function getTemplateById(id: string): StoredTemplate | undefined {
-  const templates = getTemplates();
-  return templates.find(template => template.id === id);
+export async function getTemplateById(id: string): Promise<StoredTemplate | null> {
+  try {
+    const docRef = doc(db, TEMPLATES_COLLECTION, id);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return processTimestamps({ id: docSnap.id, ...docSnap.data() } as StoredTemplate);
+    } else {
+      console.log("No such template document!");
+      return null;
+    }
+  } catch (error) {
+    console.error("Error fetching template by ID from Firestore:", error);
+    return null;
+  }
 }
 
-export function saveTemplate(
+export async function saveTemplate(
   templateData: PayloadFormValues,
   name: string,
   description?: string,
   id?: string
-): StoredTemplate | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
+): Promise<StoredTemplate | null> {
   try {
-    let templates = getTemplates();
-    const now = new Date().toISOString();
-    let templateToSave: StoredTemplate | undefined;
-
+    const now = serverTimestamp(); // Use Firestore server timestamp for consistency
+    
     if (id) { // Editing existing template
-      const existingIndex = templates.findIndex(template => template.id === id);
-      if (existingIndex > -1) {
-        templates[existingIndex] = {
-          ...templates[existingIndex],
-          name,
-          description,
-          data: templateData,
-          updatedAt: now,
-        };
-        templateToSave = templates[existingIndex];
-      } else {
-        // If ID provided but not found, create a new one with the given ID (or generate new if that's preferred logic)
-        // For now, let's assume if ID is given, it should exist, or it's an error.
-        // To be safe, let's create a new one if not found, using the provided ID if it was intended.
-        // However, standard practice would be to generate a new ID if it's truly a "new" entry.
-        // Let's stick to nanoid for any new ID.
-        const newId = nanoid(); // Generate new nanoid
-        const newTemplate: StoredTemplate = { id: newId, name, description, data: templateData, createdAt: now, updatedAt: now };
-        templates.push(newTemplate);
-        templateToSave = newTemplate;
-      }
+      const docRef = doc(db, TEMPLATES_COLLECTION, id);
+      const updatedTemplateData = {
+        name,
+        description: description || "",
+        data: templateData,
+        updatedAt: now,
+      };
+      await setDoc(docRef, updatedTemplateData, { merge: true }); // merge: true updates fields or creates if not exist
+      // To return the full template, we might need to fetch it again or construct it carefully
+      // For simplicity, returning the input details with the ID and assuming server handles timestamps
+      // A more robust way would be to refetch or listen for snapshot changes.
+      return { id, name, description, data: templateData, createdAt: "N/A (Existing)", updatedAt: new Date().toISOString() }; // Placeholder timestamps
     } else { // Creating new template
-      const newId = nanoid(); // Use nanoid for new templates
-      const newTemplate: StoredTemplate = { id: newId, name, description, data: templateData, createdAt: now, updatedAt: now };
-      templates.push(newTemplate);
-      templateToSave = newTemplate;
+      const newId = nanoid(); // Keep nanoid for client-side generated ID if needed, but Firestore can auto-generate.
+                             // Using client-side nanoid for consistency with previous implementation.
+      const newTemplateData = {
+        id: newId, // Store nanoid also in the document if needed for querying by this specific id format
+        name,
+        description: description || "",
+        data: templateData,
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Firestore `addDoc` generates its own ID. If we want to use nanoid as the document ID:
+      const docRef = doc(db, TEMPLATES_COLLECTION, newId);
+      await setDoc(docRef, newTemplateData);
+      return { ...newTemplateData, id: newId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; // Placeholder timestamps
     }
-
-    localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(templates));
-    return templateToSave || null;
   } catch (error) {
-    console.error("Error saving template to localStorage:", error);
+    console.error("Error saving template to Firestore:", error);
     return null;
   }
 }
 
-export function deleteTemplate(id: string): boolean {
-   if (typeof window === 'undefined') {
-    return false;
-  }
+export async function deleteTemplate(id: string): Promise<boolean> {
   try {
-    let templates = getTemplates();
-    const newTemplates = templates.filter(template => template.id !== id);
-    if (templates.length === newTemplates.length) return false; // Not found
-
-    localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(newTemplates));
+    const docRef = doc(db, TEMPLATES_COLLECTION, id);
+    await deleteDoc(docRef);
     return true;
   } catch (error) {
-    console.error("Error deleting template from localStorage:", error);
+    console.error("Error deleting template from Firestore:", error);
     return false;
   }
 }
 
 // Helper to add a default template if none exist (for initial setup)
-export function initializeDefaultTemplate() {
-  if (typeof window === 'undefined') return;
-  const templates = getTemplates();
-  if (templates.length === 0) {
-    const { defaultPayloadFormValues } = require('./payload-schema'); // Lazy import
-    // saveTemplate will now use nanoid internally for the ID
-    saveTemplate(defaultPayloadFormValues, "Default Spark Job", "A pre-configured Spark job template.");
+export async function initializeDefaultTemplate() {
+  try {
+    const templates = await getTemplates(); // Check if any templates exist
+    if (templates.length === 0) {
+      console.log("No templates found in Firestore, initializing default template...");
+      // saveTemplate will now use nanoid internally for the ID
+      await saveTemplate(defaultPayloadFormValues, "Default Spark Job", "A pre-configured Spark job template.");
+      console.log("Default template initialized.");
+    } else {
+      console.log(`${templates.length} templates found in Firestore. No initialization needed.`);
+    }
+  } catch (error) {
+    console.error("Error during default template initialization:", error);
   }
 }

@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -31,28 +31,39 @@ export default function ManageTemplatesPage() {
   const [deleteConfirmationId, setDeleteConfirmationId] = useState('');
   const [showQuickGuide, setShowQuickGuide] = useState(true);
 
-  useEffect(() => {
-    initializeDefaultTemplate(); 
-    setTemplates(getTemplates());
+  const fetchTemplates = useCallback(async () => {
+    setIsLoading(true);
+    // Initialize default template if none exist - this now checks Firestore.
+    // It's better to run this once, perhaps on app startup or a special admin action.
+    // For simplicity here, it runs on page load if templates are empty.
+    await initializeDefaultTemplate(); 
+    const fetchedTemplates = await getTemplates();
+    setTemplates(fetchedTemplates);
     setIsLoading(false);
   }, []);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
 
   const handleDeleteInitiated = (template: StoredTemplate) => {
     setTemplateToDelete(template);
     setDeleteConfirmationId(''); // Clear previous input
   };
 
-  const handleDeleteConfirmed = () => {
+  const handleDeleteConfirmed = async () => {
     if (templateToDelete && deleteConfirmationId === templateToDelete.id) {
-      const success = deleteTemplate(templateToDelete.id);
+      setIsLoading(true);
+      const success = await deleteTemplate(templateToDelete.id);
       if (success) {
-        setTemplates(getTemplates()); 
+        await fetchTemplates(); // Re-fetch templates after deletion
         toast({ title: "Template deleted", description: `Template "${templateToDelete.name}" has been successfully deleted.` });
       } else {
         toast({ title: "Error", description: "Could not delete the template.", variant: "destructive" });
       }
       setTemplateToDelete(null);
       setDeleteConfirmationId('');
+      setIsLoading(false);
     } else {
       toast({ title: "Error", description: "Template ID mismatch. Deletion cancelled.", variant: "destructive" });
     }
@@ -64,7 +75,7 @@ export default function ManageTemplatesPage() {
   }
 
   if (isLoading) {
-    return <div className="text-center py-10">Loading templates...</div>;
+    return <div className="text-center py-10">Loading templates from database...</div>;
   }
 
   return (
@@ -102,7 +113,7 @@ export default function ManageTemplatesPage() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground space-y-1 pt-2"> {/* Added pt-2 for consistency after pb-2 on header */}
+          <CardContent className="text-sm text-muted-foreground space-y-1 pt-2">
             <p>&bull; <strong>Use Template:</strong> Quickly generate a JSON payload. Only EMR Cluster, Job Name, Main Application File, and Main Class can be changed. Changes are NOT saved to the template.</p>
             <p>&bull; <strong>Edit Template:</strong> Modify all parameters of an existing template and save your changes.</p>
             <p>&bull; <strong>Create New Template:</strong> Build a new job configuration from scratch and save it as a template.</p>
@@ -110,7 +121,7 @@ export default function ManageTemplatesPage() {
         </Card>
       )}
 
-      {templates.length === 0 ? (
+      {templates.length === 0 && !isLoading ? (
         <div className="text-center py-10">
           <p className="text-muted-foreground text-lg">No templates found.</p>
           <p className="text-muted-foreground">Get started by creating a new template.</p>
@@ -156,10 +167,10 @@ export default function ManageTemplatesPage() {
               <AlertDialogCancel onClick={closeDeleteDialog}>Cancel</AlertDialogCancel>
               <AlertDialogAction 
                 onClick={handleDeleteConfirmed} 
-                disabled={deleteConfirmationId !== templateToDelete.id}
+                disabled={deleteConfirmationId !== templateToDelete.id || isLoading}
                 className="bg-destructive hover:bg-destructive/90 text-destructive-foreground disabled:opacity-50"
               >
-                Delete Template
+                {isLoading ? "Deleting..." : "Delete Template"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

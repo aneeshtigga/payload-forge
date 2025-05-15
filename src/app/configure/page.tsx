@@ -5,7 +5,7 @@ import { useState, useEffect, Suspense, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns'; // Added parseISO
 import {
   payloadFormSchema,
   type PayloadFormValues,
@@ -14,32 +14,27 @@ import {
 } from '@/lib/payload-schema';
 import { PayloadForm } from '@/components/payload-forge/payload-form';
 import { JsonPreview } from '@/components/payload-forge/json-preview';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { getTemplateById, saveTemplate, type StoredTemplate } from '@/lib/template-store';
-import { ArrowLeft, Save, Edit, Info } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 type FormMode = 'create' | 'edit' | 'use';
 
-// Helper hook for debounce
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
-
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedValue(value);
     }, delay);
-
     return () => {
       clearTimeout(handler);
     };
   }, [value, delay]);
-
   return debouncedValue;
 }
-
 
 function ConfigurePageContent() {
   const router = useRouter();
@@ -57,6 +52,8 @@ function ConfigurePageContent() {
   const [templateDescriptionInput, setTemplateDescriptionInput] = useState('');
   
   const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
 
   const form = useForm<PayloadFormValues>({
     resolver: zodResolver(payloadFormSchema),
@@ -65,50 +62,52 @@ function ConfigurePageContent() {
   });
 
   useEffect(() => {
-    setIsLoading(true);
-    let initialValues = defaultPayloadFormValues;
-    let fetchedTemplate: StoredTemplate | undefined | null = null;
-    let currentMode = modeParam || (templateId ? 'edit' : 'create');
+    const loadTemplate = async () => {
+      setIsLoading(true);
+      let initialValues = { ...defaultPayloadFormValues }; // Create a new object to avoid mutation issues
+      let fetchedTemplate: StoredTemplate | null = null;
+      let currentMode = modeParam || (templateId ? 'edit' : 'create');
 
-    if (templateId && (currentMode === 'edit' || currentMode === 'use')) {
-      fetchedTemplate = getTemplateById(templateId);
-      if (fetchedTemplate) {
-        initialValues = fetchedTemplate.data;
-        setCurrentTemplate(fetchedTemplate);
-        setTemplateNameInput(fetchedTemplate.name);
-        setTemplateDescriptionInput(fetchedTemplate.description || '');
-        setFormMode(currentMode);
+      if (templateId && (currentMode === 'edit' || currentMode === 'use')) {
+        fetchedTemplate = await getTemplateById(templateId);
+        if (fetchedTemplate) {
+          initialValues = fetchedTemplate.data;
+          setCurrentTemplate(fetchedTemplate);
+          setTemplateNameInput(fetchedTemplate.name);
+          setTemplateDescriptionInput(fetchedTemplate.description || '');
+          setFormMode(currentMode);
+        } else {
+          toast({ title: "Template not found", description: "Redirecting to create new.", variant: "destructive" });
+          router.replace('/configure?mode=create');
+          currentMode = 'create';
+          setFormMode('create');
+          setTemplateNameInput('Untitled Payload Template');
+          setTemplateDescriptionInput('');
+        }
+      } else if (currentMode === 'create') {
+        setFormMode('create');
+        setTemplateNameInput('Untitled Payload Template');
+        setTemplateDescriptionInput('');
+        setCurrentTemplate(null);
       } else {
-        toast({ title: "Template not found", description: "Redirecting to create new.", variant: "destructive" });
         router.replace('/configure?mode=create');
-        currentMode = 'create'; // Fallback
+        currentMode = 'create';
         setFormMode('create');
         setTemplateNameInput('Untitled Payload Template');
         setTemplateDescriptionInput('');
       }
-    } else if (currentMode === 'create') {
-      setFormMode('create');
-      setTemplateNameInput('Untitled Payload Template');
-      setTemplateDescriptionInput('');
-      setCurrentTemplate(null); // Ensure no stale template
-    } else {
-      // Default to create if params are missing/invalid and no templateId
-      router.replace('/configure?mode=create');
-      currentMode = 'create';
-      setFormMode('create');
-      setTemplateNameInput('Untitled Payload Template');
-      setTemplateDescriptionInput('');
-    }
-    
-    form.reset(initialValues);
-    setGeneratedJson(transformToPayloadStructure(initialValues));
-    setIsLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateId, modeParam, router, toast]); // form.reset removed from deps to avoid issues with react-hook-form v7+
+      
+      form.reset(initialValues); // Reset form with potentially fetched or default values
+      setGeneratedJson(transformToPayloadStructure(initialValues));
+      setIsLoading(false);
+    };
 
-  // Update JSON preview when form values change
+    loadTemplate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateId, modeParam, router, toast]); // form.reset removed from deps, handling it within loadTemplate
+
   const watchedValues = form.watch();
-  const watchedValuesString = JSON.stringify(watchedValues);
+  const watchedValuesString = JSON.stringify(watchedValues); // For dependency array
 
   useEffect(() => {
     if (!isLoading) {
@@ -116,50 +115,62 @@ function ConfigurePageContent() {
         setGeneratedJson(newJson);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchedValuesString, isLoading]);
+  }, [watchedValuesString, isLoading]); // Use the stringified version
 
-  // Auto-save for template name and description
   const debouncedTemplateName = useDebounce(templateNameInput, 1500);
   const debouncedTemplateDescription = useDebounce(templateDescriptionInput, 1500);
 
   useEffect(() => {
-    if (formMode === 'use' || !currentTemplate?.id || isLoading) {
-      return;
-    }
+    const autoSaveTemplateDetails = async () => {
+      if (formMode === 'use' || !currentTemplate?.id || isLoading || isSaving) {
+        return;
+      }
 
-    const nameChanged = debouncedTemplateName.trim() !== (currentTemplate.name || '').trim();
-    const descriptionChanged = (debouncedTemplateDescription || '').trim() !== (currentTemplate.description || '').trim();
+      // Check if values actually changed from the loaded currentTemplate
+      const nameChanged = debouncedTemplateName.trim() !== (currentTemplate.name || '').trim();
+      const descriptionChanged = (debouncedTemplateDescription || '').trim() !== (currentTemplate.description || '').trim();
 
-    if (!nameChanged && !descriptionChanged) {
-      return;
-    }
+      if (!nameChanged && !descriptionChanged) {
+        return;
+      }
+      
+      if (debouncedTemplateName.trim() === '') {
+        return; // Don't auto-save if name is empty.
+      }
+      
+      setIsSaving(true);
+      const currentFormData = form.getValues(); // Ensure this is the latest form data
+      const saved = await saveTemplate(
+        currentFormData, // Pass current form data, not just details
+        debouncedTemplateName.trim(),
+        debouncedTemplateDescription.trim(),
+        currentTemplate.id
+      );
 
-    if (debouncedTemplateName.trim() === '') {
-      // Do not auto-save if name is empty, main save will catch this
-      return;
+      if (saved) {
+        // Update currentTemplate with the potentially new 'updatedAt' and other details from 'saved'
+        // Firestore save might not return the full object with server timestamps immediately in a simple way
+        // So, we optimistically update with what we have.
+        const updatedTemplate = await getTemplateById(saved.id); // Re-fetch to get server timestamps
+        if (updatedTemplate) setCurrentTemplate(updatedTemplate);
+        
+        toast({
+          title: 'Auto-saved!',
+          description: 'Template details updated.',
+          duration: 2000,
+        });
+      }
+      setIsSaving(false);
+    };
+
+    if (!isLoading && (debouncedTemplateName !== templateNameInput || debouncedTemplateDescription !== templateDescriptionInput)) {
+        // This condition is to ensure autosave triggers if debounced values catch up to actual input
+        // but it might be redundant if the main check covers it. The primary trigger should be debounced values.
     }
+    autoSaveTemplateDetails();
     
-    const currentFormData = form.getValues();
-    const saved = saveTemplate(
-      currentFormData,
-      debouncedTemplateName.trim(),
-      debouncedTemplateDescription.trim(),
-      currentTemplate.id
-    );
-
-    if (saved) {
-      setCurrentTemplate(saved);
-      toast({
-        title: 'Auto-saved!',
-        description: 'Template details updated.',
-        duration: 2000,
-      });
-    } else {
-      // Error handled by saveTemplate's console log, toast might be too noisy for auto-save failures
-      // toast({ title: "Auto-save Failed", variant: "destructive" });
-    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedTemplateName, debouncedTemplateDescription, currentTemplate, formMode, isLoading, form.getValues, toast]);
+  }, [debouncedTemplateName, debouncedTemplateDescription, formMode, isLoading, currentTemplate?.id, currentTemplate?.name, currentTemplate?.description, isSaving]);
 
 
   const handleFormSubmit = useCallback(async (values: PayloadFormValues) => {
@@ -172,39 +183,51 @@ function ConfigurePageContent() {
       return;
     }
 
-    const saved = saveTemplate(values, templateNameInput.trim(), templateDescriptionInput.trim(), currentTemplate?.id);
+    setIsSaving(true);
+    const saved = await saveTemplate(values, templateNameInput.trim(), templateDescriptionInput.trim(), currentTemplate?.id);
+    setIsSaving(false);
+
     if (saved) {
       toast({ title: "Template Saved!", description: `Template "${saved.name}" has been successfully ${currentTemplate?.id ? 'updated' : 'created'}.` });
-      setCurrentTemplate(saved); // Update current template state
-      setTemplateNameInput(saved.name); // Sync input with saved name
-      setTemplateDescriptionInput(saved.description || ''); // Sync input with saved description
+      
+      const updatedTemplate = await getTemplateById(saved.id); // Re-fetch to get server timestamps
+      if (updatedTemplate) {
+          setCurrentTemplate(updatedTemplate);
+          setTemplateNameInput(updatedTemplate.name);
+          setTemplateDescriptionInput(updatedTemplate.description || '');
+          form.reset(updatedTemplate.data); // Important: reset form with data from DB
+      }
 
-      if (formMode === 'create' && !currentTemplate?.id) { // Check if it was truly a new creation
+
+      if (formMode === 'create' && !templateId) { // If it was a new creation (no templateId in URL initially)
         router.replace(`/configure?templateId=${saved.id}&mode=edit`);
-        setFormMode('edit');
+        setFormMode('edit'); // Explicitly set mode to edit
       }
     } else {
-      toast({ title: "Save Failed", description: "Could not save the template.", variant: "destructive" });
+      toast({ title: "Save Failed", description: "Could not save the template to the database.", variant: "destructive" });
     }
-  }, [formMode, templateNameInput, templateDescriptionInput, currentTemplate, toast, router, setCurrentTemplate, setFormMode, setTemplateNameInput, setTemplateDescriptionInput]);
+  }, [formMode, templateNameInput, templateDescriptionInput, currentTemplate, toast, router, templateId, form]);
   
   const jobNameForDownload = form.getValues("job_name") || "payload";
   const downloadFileName = `${jobNameForDownload.replace(/[^a-z0-9_.-]/gi, '_')}.json`;
+  const saveButtonText = isSaving ? "Saving..." : ((formMode === 'edit' || (formMode === 'create' && templateId)) ? 'Update Template' : 'Save New Template');
 
-  const saveButtonText = (formMode === 'edit' || (formMode === 'create' && currentTemplate?.id)) ? 'Update Template' : 'Save New Template';
+  const displayUpdatedAt = currentTemplate?.updatedAt
+    ? format(typeof currentTemplate.updatedAt === 'string' ? parseISO(currentTemplate.updatedAt) : currentTemplate.updatedAt, "MMM d, yyyy, h:mm a")
+    : null;
 
 
   if (isLoading) {
-    return <div className="text-center py-10">Loading configuration...</div>;
+    return <div className="text-center py-10">Loading configuration from database...</div>;
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
         <div className="flex-grow">
-          {currentTemplate?.updatedAt && formMode !== 'create' && (
+          {displayUpdatedAt && formMode !== 'create' && (
             <p className="text-xs text-muted-foreground mb-1">
-              Last updated: {format(new Date(currentTemplate.updatedAt), "MMM d, yyyy, h:mm a")}
+              Last updated: {displayUpdatedAt}
             </p>
           )}
           <Input
@@ -212,14 +235,14 @@ function ConfigurePageContent() {
             onChange={(e) => setTemplateNameInput(e.target.value)}
             placeholder="Untitled Payload Template"
             className="text-3xl !text-3xl underline decoration-dotted decoration-gray-400 decoration-2 underline-offset-4 font-bold border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto mb-1 disabled:bg-transparent disabled:cursor-default disabled:opacity-100"
-            disabled={formMode === 'use'}
+            disabled={formMode === 'use' || isSaving}
           />
           <Input
             value={templateDescriptionInput}
             onChange={(e) => setTemplateDescriptionInput(e.target.value)}
             placeholder="Add a description..."
             className="text-sm text-muted-foreground border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 p-0 h-auto disabled:bg-transparent disabled:cursor-default disabled:opacity-100"
-            disabled={formMode === 'use'}
+            disabled={formMode === 'use' || isSaving}
           />
         </div>
         <Button variant="outline" onClick={() => router.push('/')} className="w-full sm:w-auto">
@@ -236,6 +259,7 @@ function ConfigurePageContent() {
               formMode={formMode}
               showSaveButton={formMode !== 'use'}
               saveButtonText={saveButtonText}
+              isSaving={isSaving}
             />
           </CardContent>
         </Card>
@@ -252,10 +276,10 @@ function ConfigurePageContent() {
   );
 }
 
-
 export default function ConfigurePage() {
   return (
-    <Suspense fallback={<div className="text-center py-10">Loading page...</div>}>
+    // Suspense boundary for client components relying on searchParams
+    <Suspense fallback={<div className="text-center py-10">Loading page details...</div>}>
       <ConfigurePageContent />
     </Suspense>
   );
