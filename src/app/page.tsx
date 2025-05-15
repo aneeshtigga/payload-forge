@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { PlusCircle, Info, AlertTriangle, X } from 'lucide-react';
 import { TemplateCard } from '@/components/payload-forge/template-card';
+import { TemplateCardSkeleton } from '@/components/payload-forge/template-card-skeleton'; // Import Skeleton
 import type { StoredTemplate } from '@/lib/template-store';
 import { getTemplates, deleteTemplate, initializeDefaultTemplate } from '@/lib/template-store';
 import { useToast } from '@/hooks/use-toast';
@@ -74,10 +75,6 @@ export default function ManageTemplatesPage() {
     setDeleteConfirmationId('');
   }
 
-  if (isLoading) {
-    return <div className="text-center py-10">Loading templates from database...</div>;
-  }
-
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -121,7 +118,13 @@ export default function ManageTemplatesPage() {
         </Card>
       )}
 
-      {templates.length === 0 && !isLoading ? (
+      {isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {Array.from({ length: 3 }).map((_, index) => ( // Display 3 skeleton cards
+            <TemplateCardSkeleton key={index} />
+          ))}
+        </div>
+      ) : templates.length === 0 ? (
         <div className="text-center py-10">
           <p className="text-muted-foreground text-lg">No templates found.</p>
           <p className="text-muted-foreground">Get started by creating a new template.</p>

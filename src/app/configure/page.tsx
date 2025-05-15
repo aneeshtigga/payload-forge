@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { getTemplateById, saveTemplate, type StoredTemplate } from '@/lib/template-store';
 import { ArrowLeft } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton'; // Import Skeleton
 
 type FormMode = 'create' | 'edit' | 'use';
 
@@ -35,6 +36,47 @@ function useDebounce<T>(value: T, delay: number): T {
   }, [value, delay]);
   return debouncedValue;
 }
+
+function ConfigurePageLoadingSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
+        <div className="flex-grow space-y-2">
+          <Skeleton className="h-6 w-1/4" /> {/* Last updated placeholder */}
+          <Skeleton className="h-12 w-3/4" /> {/* Template Name placeholder */}
+          <Skeleton className="h-5 w-1/2" /> {/* Template Description placeholder */}
+        </div>
+        <Skeleton className="h-10 w-full sm:w-40 rounded-md" /> {/* Back button placeholder */}
+      </div>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+        <Card className="lg:sticky lg:top-24 shadow-none border-none p-0">
+          <CardContent className="p-0 space-y-6">
+            {/* Form Skeleton */}
+            <div className="space-y-4">
+              <Skeleton className="h-10 w-full rounded-md" />
+              <Skeleton className="h-10 w-full rounded-md" />
+              <Skeleton className="h-10 w-full rounded-md" />
+            </div>
+            <Skeleton className="h-20 w-full rounded-md" /> {/* A larger block for complex form sections */}
+            <Skeleton className="h-12 w-full rounded-md" /> {/* Save button placeholder */}
+          </CardContent>
+        </Card>
+        
+        <div className="lg:sticky lg:top-24 h-full">
+           <Card className="shadow-xl h-full">
+             <CardContent className="p-6 h-full space-y-4">
+               <Skeleton className="h-8 w-1/2" /> {/* JSON Preview Title */}
+               <Skeleton className="h-10 w-full" /> {/* Buttons for copy/download */}
+               <Skeleton className="h-64 w-full rounded-md" /> {/* JSON content area */}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function ConfigurePageContent() {
   const router = useRouter();
@@ -218,7 +260,7 @@ function ConfigurePageContent() {
 
 
   if (isLoading) {
-    return <div className="text-center py-10">Loading configuration from database...</div>;
+    return <ConfigurePageLoadingSkeleton />;
   }
 
   return (
@@ -279,7 +321,7 @@ function ConfigurePageContent() {
 export default function ConfigurePage() {
   return (
     // Suspense boundary for client components relying on searchParams
-    <Suspense fallback={<div className="text-center py-10">Loading page details...</div>}>
+    <Suspense fallback={<ConfigurePageLoadingSkeleton />}>
       <ConfigurePageContent />
     </Suspense>
   );
