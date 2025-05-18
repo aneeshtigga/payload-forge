@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { UseFormReturn } from 'react-hook-form';
 import {
   Form,
@@ -27,7 +27,7 @@ import { Separator } from '@/components/ui/separator';
 import { DynamicKeyValueEditor } from './dynamic-key-value-editor';
 import type { PayloadFormValues, EmrClusterValue } from '@/lib/payload-schema';
 import { emrClusterOptions } from '@/lib/payload-schema';
-import { Save, AlertTriangle } from 'lucide-react';
+import { Save, AlertTriangle, Search, Loader2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,8 +38,22 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useToast } from '@/hooks/use-toast';
 import { Label } from '@/components/ui/label';
+import { searchArtylabByVersion, type ArtylabSearchInput } from '@/ai/flows/artylab-search-flow';
 
 
 type FormMode = 'create' | 'edit' | 'use';
@@ -64,13 +78,18 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
   const [clusterBeforeProdSelection, setClusterBeforeProdSelection] = useState<EmrClusterValue>(form.getValues('emr_cluster'));
   const [prodConfirmationInput, setProdConfirmationInput] = useState('');
 
+  // State for Artylab search
+  const [artylabSearchVersion, setArtylabSearchVersion] = useState('');
+  const [artylabSearchResults, setArtylabSearchResults] = useState<string[]>([]);
+  const [isArtylabSearchLoading, setIsArtylabSearchLoading] = useState(false);
+  const [isArtylabPopoverOpen, setIsArtylabPopoverOpen] = useState(false);
+
   const handleEmrSelectChange = (selectedValue: EmrClusterValue, fieldOnChange: (value: EmrClusterValue) => void, currentFieldValue: EmrClusterValue) => {
     if (PROD_CLUSTERS.includes(selectedValue)) {
       setPendingProdCluster(selectedValue);
       setClusterBeforeProdSelection(currentFieldValue); 
       setProdConfirmationInput(''); 
       setIsProdConfirmDialogOpen(true);
-      // Do not call fieldOnChange yet. It will be called on dialog confirmation.
     } else {
       fieldOnChange(selectedValue); 
       setPendingProdCluster(null);
@@ -89,11 +108,44 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
   };
 
   const handleProdClusterCancel = () => {
-    // Revert form value and Select component's display
     form.setValue('emr_cluster', clusterBeforeProdSelection, { shouldValidate: true });
     setIsProdConfirmDialogOpen(false);
     setPendingProdCluster(null);
     toast({ title: "Selection Cancelled", description: `EMR Cluster selection reverted to ${clusterBeforeProdSelection}.` , variant: "default"});
+  };
+
+  const handleArtylabSearch = async () => {
+    if (!artylabSearchVersion.trim()) {
+      toast({ title: "Version Required", description: "Please enter a JAR version to search.", variant: "default" });
+      return;
+    }
+    setIsArtylabSearchLoading(true);
+    setArtylabSearchResults([]); // Clear previous results
+    try {
+      const input: ArtylabSearchInput = { version: artylabSearchVersion.trim() };
+      const results = await searchArtylabByVersion(input);
+      setArtylabSearchResults(results);
+      if (results.length === 0) {
+        toast({ title: "No Results", description: `No JAR files found for version "${artylabSearchVersion}".`, variant: "default" });
+      }
+    } catch (error) {
+      console.error("Error searching Artylab:", error);
+      // Updated error message as per previous request
+      if (error instanceof Error && (error.message.includes('ECONNREFUSED') || error.message.includes('fetch failed'))) {
+        toast({ title: "Search Failed", description: "Could not connect to Artylab. Make sure you're connected to the VPN.", variant: "destructive" });
+      } else {
+        toast({ title: "Search Failed", description: (error as Error).message || "Could not fetch results from Artylab.", variant: "destructive" });
+      }
+      setArtylabSearchResults([]);
+    } finally {
+      setIsArtylabSearchLoading(false);
+      setIsArtylabPopoverOpen(true); // Open popover even if no results, to show "No results" message
+    }
+  };
+
+  const handleArtylabPathSelect = (path: string) => {
+    form.setValue('main_application_file', path, { shouldValidate: true });
+    setIsArtylabPopoverOpen(false);
   };
 
 
@@ -106,7 +158,6 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
             <CardHeader className="bg-card-foreground/5">
               <CardTitle className="text-2xl">Job Identification & Execution</CardTitle>
               <CardDescription>Core identifiers and execution parameters for your job.
-                {isUseMode && <span className="block text-primary font-semibold mt-1">Only fields in this section are editable in 'Use' mode.</span>}
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -151,19 +202,91 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                   </FormItem>
                 )}
               />
+              
+              {/* Main Application File with Artylab Search */}
               <FormField
                 control={form.control}
                 name="main_application_file"
                 render={({ field }) => (
                   <FormItem className="md:col-span-2">
-                    <FormLabel>Main Application File (URL or Path)</FormLabel>
-                    <FormControl>
-                      <Input placeholder="e.g. s3://bucket/path/to/app.jar or https://..." {...field} disabled={isSaving} />
-                    </FormControl>
+                    <FormLabel>Main Application File (URL or S3 Path)</FormLabel>
+                    {isUseMode ? (
+                      <div className="flex items-end gap-2">
+                        <FormControl className="flex-grow">
+                          <Input 
+                            placeholder="e.g. s3://bucket/path/to/app.jar" 
+                            {...field} 
+                            disabled={isSaving} 
+                          />
+                        </FormControl>
+                        <Input
+                          type="text"
+                          placeholder="JAR Version"
+                          value={artylabSearchVersion}
+                          onChange={(e) => setArtylabSearchVersion(e.target.value)}
+                          className="w-1/3"
+                          disabled={isSaving || isArtylabSearchLoading}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleArtylabSearch();
+                            }
+                          }}
+                        />
+                        <Popover open={isArtylabPopoverOpen} onOpenChange={setIsArtylabPopoverOpen}>
+                          <PopoverTrigger asChild>
+                            <Button 
+                              variant="outline" 
+                              onClick={handleArtylabSearch} 
+                              disabled={isSaving || isArtylabSearchLoading}
+                              className="shrink-0"
+                              type="button"
+                            >
+                              {isArtylabSearchLoading ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Search className="h-4 w-4" />
+                              )}
+                              <span>Search Artylab</span>
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[600px] p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Filter results..." disabled={isArtylabSearchLoading} />
+                              <CommandList>
+                                {isArtylabSearchLoading && <CommandItem disabled>Loading...</CommandItem>}
+                                <CommandEmpty>
+                                  {artylabSearchResults.length === 0 && !isArtylabSearchLoading 
+                                    ? "No results found." 
+                                    : "Start typing to search or filter results."}
+                                </CommandEmpty>
+                                <CommandGroup>
+                                  {artylabSearchResults.map((path) => (
+                                    <CommandItem
+                                      key={path}
+                                      value={path}
+                                      onSelect={() => handleArtylabPathSelect(path)}
+                                      className="whitespace-normal break-words h-auto"
+                                    >
+                                      {path}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    ) : (
+                      <FormControl>
+                        <Input placeholder="e.g. s3://bucket/path/to/app.jar or https://..." {...field} disabled={isSaving} />
+                      </FormControl>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
               />
+
               <FormField
                 control={form.control}
                 name="main_class"
@@ -249,7 +372,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                         <FormItem>
                           <FormLabel>Stop Job After (minutes)</FormLabel>
                           <FormControl>
-                            <Input type="number" placeholder="e.g. 420" {...field} disabled={isSaving} />
+                            <Input type="number" placeholder="e.g. 420" {...field} onChange={e => field.onChange(parseInt(e.target.value, 10) || 0)} disabled={isSaving} />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -358,7 +481,7 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                 control={form.control}
                 name="spark_conf"
                 title="Spark Configurations"
-                errors={form.formState.errors} // Consider disabling DynamicKeyValueEditor fields if isSaving
+                errors={form.formState.errors}
               />
 
               <Separator />
@@ -367,21 +490,21 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
                 control={form.control}
                 name="hadoop_conf"
                 title="Hadoop Configurations"
-                errors={form.formState.errors} // Consider disabling DynamicKeyValueEditor fields if isSaving
+                errors={form.formState.errors}
               />
             </>
           )}
 
           {showSaveButton && formMode !== 'use' && (
-            <Button type="submit" className="w-full bg-accent hover:bg-accent/90 text-accent-foreground text-lg py-6 mt-8" disabled={isSaving}>
-              <Save className="mr-2 h-5 w-5" /> {saveButtonText}
+            <Button type="submit" className="w-full bg-accent hover:bg-accent/90 text-accent-foreground text-lg py-6 mt-8" disabled={isSaving || isArtylabSearchLoading}>
+              <Save className="mr-2 h-5 w-5" /> {isSaving ? "Saving..." : saveButtonText}
             </Button>
           )}
         </form>
       </Form>
 
       {isProdConfirmDialogOpen && (
-        <AlertDialog open={isProdConfirmDialogOpen} onOpenChange={setIsProdConfirmDialogOpen}>
+        <AlertDialog open={isProdConfirmDialogOpen} onOpenChange={(open) => !open && handleProdClusterCancel()}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <div className="flex items-center space-x-2">
@@ -422,3 +545,4 @@ export function PayloadForm({ form, onSubmit, formMode, showSaveButton = false, 
     </>
   );
 }
+
